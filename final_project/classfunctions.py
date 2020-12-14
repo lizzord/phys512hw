@@ -3,7 +3,8 @@ import matplotlib.pyplot as mpl
 from mpl_toolkits.mplot3d import Axes3D
 
 class NbodyClass:
-    def __init__(self, x, v, m=1, sgrid=10, dt=0.1, outdir='outputs/', periodic=False, guard=2):
+    #guard cells should be even. irrelevant for periodic BC
+    def __init__(self, x, v, m=1, sgrid=10, dt=0.1, outdir='outputs/', periodic=False, guard=2, max_step=10**5):
         self.x = x.copy() #position vector.have x[0, :] = x, x[1,:] = y, x[2, :]=z etc.
         self.x_half = x.copy()
         self.v = v.copy() #velocity vector. 
@@ -14,10 +15,11 @@ class NbodyClass:
         
         #defining the grid
         #ONLY WANT GUARD CELLS FOR NON PERIODIC
-        if periodic:
+        if periodic: #offset x positions by guard cells to allow guard cells on zero side as well.
             self.sgrid = sgrid #the smaller grid of actual data
             self.ngrid = sgrid #the grid with gaurd cells
         else:
+            self.x += guard//2 
             self.sgrid = sgrid #the smaller grid of actual data
             self.ngrid = sgrid + guard #the grid with gaurd cells
             
@@ -30,6 +32,10 @@ class NbodyClass:
         
         #pre-define acceleration
         self.acc = np.zeros(x.shape)
+        
+        #total energy, kinetic and potential
+        self.ke = np.zeros( (3, max_step) )
+        self.pe = np.zeros( (max_step) )
         
         #where to save output images
         self.outdir = outdir
@@ -120,8 +126,12 @@ class NbodyClass:
         
         for ii in range(0, num):
             x_idx = tuple(self.x_half[:, ii].astype(int))
-            part_pot = np.roll(self.greens_pot, x_idx, (0, 1, 2))
+            part_pot = np.roll(self.greens_pot, x_idx, (0, 1, 2))[0:self.ngrid, 0:self.ngrid, 0:self.ngrid]
             potential = self.pot - part_pot
+            
+            #update kinetic and potential energy for previous step
+            self.pe[self.steps_taken] += potential[x_idx]
+            self.ke[:, self.steps_taken] = 1/2*self.m*(self.v[:, ii])**2
             
             if DEBUG:
                 mpl.figure()
@@ -246,28 +256,8 @@ class NbodyClass:
         return 0
         
     def take_step(self, DEBUG=False):
-        #FOR A SINGLE PARTICLE
-        #take the GRADIENT of the potential at its position
-        #gives you the FORCE.
-        #get the acceleration.
-        #update the VELOCITY.
-        #update the POSITION.
-        #leapfrog somehow.
-        
-        #LEAP FROGGOOO
-        #OK SO:
-        #take x halfway into interval with currently estimated velocity
-        #use THAT value of x to calculate the forces (so THAT'S when you'd call get potential I think. but would have to do for ALL of the particles
-        #use THAT calculated force to get the velocity in the middle of the interval
-        #use THAT velocity to update the x for real with a full timestep
-        #then use the same force to update the velocity for real with a full timestep.
-        
         #QUESTION: put ALL particles halfway out of position before calculating the potential? or just the one particle. probably all of the particles
-        
-#         self.x += self.dt*self.v
-#         self.steps_taken += 1
-        
-        
+
         #TO DO:
         #take X halfway into interval with currently estimated velocity (HALF timestep)
         # use THAT value of the x to calculated the...
@@ -278,7 +268,21 @@ class NbodyClass:
         #update V: use FULL timestep now
         
         #get halfway done x values. update grid and potential based on them.
-        self.x_half = self.x + 1/2*self.dt*self.v
+        
+        if self.periodic:
+            self.x_half = (self.x + 1/2*self.dt*self.v)%self.ngrid #keep it inside the size
+        else:
+            x_half_tmp = self.x + 1/2*self.dt*self.v
+            idx = (x_half_tmp >= 0) & (x_half_tmp < self.ngrid) #get rid of lost particles
+            idx_inside = idx[0, :] & idx[1, :] & idx[2, :]
+            
+            #cut it from all vectors with particles
+            self.x_half = x_half_tmp[:, idx_inside]
+            self.x = self.x[:, idx_inside]
+            self.v_half = self.v_half[:, idx_inside]
+            self.v = self.v[:, idx_inside]
+            self.acc = self.acc[:, idx_inside]
+            
         self.update_grid_half() #updates grid to values of half x
         self.get_potential(DEBUG=DEBUG)
         
@@ -289,7 +293,20 @@ class NbodyClass:
         self.v_half = self.v + 1/2*self.dt*self.acc
         
         #use that to fully update update x and v.
-        self.x = self.x + self.dt*self.v_half
+        if self.periodic:
+            self.x = (self.x + self.dt*self.v_half)%self.ngrid #keep it inside the size
+        else:
+            x_tmp = self.x + self.dt*self.v_half
+            idx = (x_tmp >= 0) & (x_tmp < self.ngrid) #get rid of lost particles
+            idx_inside = idx[0, :] & idx[1, :] & idx[2, :]
+            
+            #cut it from all vectors with particles
+            self.x_half = self.x_half[:, idx_inside]
+            self.x = x_tmp[:, idx_inside]
+            self.v_half = self.v_half[:, idx_inside]
+            self.v = self.v[:, idx_inside]
+            self.acc = self.acc[:, idx_inside]
+        
         self.v = self.v + self.dt*self.acc
         
         #update the grid with the new legit x positions
