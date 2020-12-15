@@ -4,7 +4,7 @@ from mpl_toolkits.mplot3d import Axes3D
 
 class NbodyClass:
     #guard cells should be even. irrelevant for periodic BC
-    def __init__(self, x, v, m=1, sgrid=10, dt=0.1, outdir='outputs/', periodic=False, guard=2, max_step=10**5, gradient=False):
+    def __init__(self, x, v, m=1, sgrid=10, dt=0.1, outdir='outputs/', periodic=False, guard=2, max_step=10**5, gradient=False, plot_name='nbodystep'):
         self.x = x.copy() #position vector.have x[0, :] = x, x[1,:] = y, x[2, :]=z etc.
         self.x_half = x.copy()
         self.v = v.copy() #velocity vector. 
@@ -13,6 +13,7 @@ class NbodyClass:
         self.dt = dt      #time step
         self.steps_taken = 0
         self.guard=guard
+        self.plot_name = plot_name
         
         #defining the grid
         #ONLY WANT GUARD CELLS FOR NON PERIODIC
@@ -50,7 +51,7 @@ class NbodyClass:
         #initialize potential
         self.pot = np.zeros((self.ngrid, self.ngrid, self.ngrid))
                 
-    def calculate_greens(self):
+    def calculate_greens(self, DEBUG=False):
         if self.periodic:
             num = self.ngrid
         else: #NOT periodic. will need to pad extra values of green's function
@@ -65,10 +66,29 @@ class NbodyClass:
         #particle lives at 0, 0, 0
         xmesh, ymesh, zmesh = np.meshgrid(dx,dx,dx)
         dr = np.sqrt(xmesh**2 + ymesh**2 + zmesh**2)
+        
+        if DEBUG:
+            print('dr x = 0 is \n ', dr[0, :, :])
+            print('dr x = 1 is \n,', dr[1, :, :])
+            mpl.imshow(dr[0, :, :], cmap='hot')
+            mpl.title('dr x=0 2D slice')
+            mpl.show()
 
         #point at 0,0,0 is 0 and will blow up
         #this is essentially softening potential, when it's that grid cell it's 1
-        dr[0, 0, 0] = 1
+#         dr[0, 0, 0] = 1
+        
+        #try softening a little more
+        soft_idx = dr < 4
+        dr[soft_idx] = 4
+        
+        if DEBUG:
+            print('dr x = 0 is \n ', dr[0, :, :])
+            print('dr x = 1 is \n,', dr[1, :, :])
+            mpl.imshow(dr[0, :, :], cmap='hot')
+            mpl.title('dr x=0 2D slice')
+            mpl.show()
+
         self.greens_pot = 1/(4*np.pi*dr)
     
     #convolve the density matrix with the potential
@@ -436,12 +456,12 @@ class NbodyClass:
         try: 
             ax=fig.add_subplot(111,projection="3d")
         except : ax=Axes3D(fig) 
-        ax.scatter(self.x[0], self.x[1], self.x[2],color="royalblue",marker="*", s=0.9)#,s=.02)
+        ax.scatter(self.x[0], self.x[1], self.x[2],color="royalblue",marker="*", s=0.02)#,s=.02)
 #         ax.scatter(self.x[0], self.x[1], self.x[2],color="royalblue",marker=".", s=0.9)#,s=.02)
         ax.set_xlabel("x-coordinate",fontsize=14)
         ax.set_ylabel("y-coordinate",fontsize=14)
         ax.set_zlabel("z-coordinate",fontsize=14)
-        ax.set_title("Particle Positions\n",fontsize=20)
+        ax.set_title("Particle Positions step" + str(self.steps_taken),fontsize=20)
         # ax.legend(loc="upper left",fontsize=14)
         # ax.xaxis.set_ticklabels([])
         # ax.yaxis.set_ticklabels([])
@@ -456,11 +476,26 @@ class NbodyClass:
         ax.scatter(self.ngrid, self.ngrid, 0, alpha=0)
         ax.scatter(self.ngrid, 0, self.ngrid, alpha=0)
         ax.scatter(self.ngrid, self.ngrid, self.ngrid, alpha=0)
-
-        mpl.savefig(self.outdir+'nbodystep'+str(self.steps_taken)+'.png', dpi=1200)
-    
-
-    def run_nbody(self, iters=10):
-        #start the first plot
-        return 0
         
+        #make a consistent 2 digit naming to satisfy the haters aka ffpmeg
+        if self.steps_taken < 10: 
+            stepstr = '0' + str(self.steps_taken)
+        else:
+            stepstr = str(self.steps_taken)
+#         mpl.savefig(self.outdir+'nbodystep'+str(self.steps_taken)+'.png', dpi=1200) #way too high quality
+#         mpl.savefig(self.outdir+'nbodystep'+str(self.steps_taken)+'test1.jpg', dpi=400) #definitely ok
+        mpl.savefig(self.outdir + self.plot_name + stepstr +'.jpg', dpi=250) #maybe ok?
+#         mpl.savefig(self.outdir+'nbodystep'+str(self.steps_taken)+'3.jpg', dpi=100) #too low
+
+        mpl.close(fig) #don't want to display it, just save it.
+    
+    def plot_energy(self):
+        mpl.figure()
+        mpl.plot(range(0, self.steps_taken), self.pe[:self.steps_taken])
+        mpl.plot(range(0, self.steps_taken), self.ke[0, :self.steps_taken])
+        mpl.plot(range(0, self.steps_taken), self.ke[1, :self.steps_taken])
+        mpl.plot(range(0, self.steps_taken), self.ke[2, :self.steps_taken])
+        mpl.plot(range(0, self.steps_taken), self.pe[:self.steps_taken] + np.sum(self.ke, axis=0)[:self.steps_taken])
+        mpl.legend(['Pot', 'keX', 'keY', 'keZ', 'tot e'])
+        mpl.title('energy')
+        mpl.show()
