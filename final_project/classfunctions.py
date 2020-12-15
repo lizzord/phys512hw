@@ -4,7 +4,7 @@ from mpl_toolkits.mplot3d import Axes3D
 
 class NbodyClass:
     #guard cells should be even. irrelevant for periodic BC
-    def __init__(self, x, v, m=1, sgrid=10, dt=0.1, outdir='outputs/', periodic=False, guard=2, max_step=10**5):
+    def __init__(self, x, v, m=1, sgrid=10, dt=0.1, outdir='outputs/', periodic=False, guard=2, max_step=10**5, gradient=False):
         self.x = x.copy() #position vector.have x[0, :] = x, x[1,:] = y, x[2, :]=z etc.
         self.x_half = x.copy()
         self.v = v.copy() #velocity vector. 
@@ -12,6 +12,7 @@ class NbodyClass:
         self.m = m        #mass of a single particle
         self.dt = dt      #time step
         self.steps_taken = 0
+        self.guard=guard
         
         #defining the grid
         #ONLY WANT GUARD CELLS FOR NON PERIODIC
@@ -32,6 +33,7 @@ class NbodyClass:
         
         #pre-define acceleration
         self.acc = np.zeros(x.shape)
+        self.gradient = gradient
         
         #total energy, kinetic and potential
         self.ke = np.zeros( (3, max_step) )
@@ -67,11 +69,10 @@ class NbodyClass:
         #point at 0,0,0 is 0 and will blow up
         #this is essentially softening potential, when it's that grid cell it's 1
         dr[0, 0, 0] = 1
-        #define potential to be negative and go to zero infinitely far away
-        self.greens_pot = -1/(4*np.pi*dr)
+        self.greens_pot = 1/(4*np.pi*dr)
     
     #convolve the density matrix with the potential
-    def get_potential(self, DEBUG=False):
+    def calculate_potential(self, DEBUG=False):
         #FIRST UPDATE: self.grid (density matrix)
         #convolution in time domain equal to multiplication in frequency domain
         
@@ -82,7 +83,7 @@ class NbodyClass:
             fft_greens = np.fft.fftn(self.greens_pot)
             fft_density = np.fft.fftn(self.grid)
 
-            self.pot = -1*np.abs(np.fft.ifftn(fft_density * fft_greens))
+            self.pot = np.abs(np.fft.ifftn(fft_density * fft_greens))
         else: #not periodic, need padding
             N = 2*self.ngrid - 1 #everything is square
     
@@ -99,10 +100,10 @@ class NbodyClass:
             fft_density = np.fft.fftn(density_padded)
 
             pot_padded = np.fft.ifftn(fft_density * fft_greens)
-            self.pot = -1*np.abs(pot_padded[0:self.ngrid, 0:self.ngrid, 0:self.ngrid])
+            self.pot = np.abs(pot_padded[0:self.ngrid, 0:self.ngrid, 0:self.ngrid])
             
             if DEBUG:
-                mpl.imshow(-1*np.abs(pot_padded[0, :, :]), cmap='hot')
+                mpl.imshow(np.abs(pot_padded[0, :, :]), cmap='hot')
                 mpl.title('PADDED final potential x=0 2D slice')
                 mpl.show()
 
@@ -125,12 +126,13 @@ class NbodyClass:
         num = self.x_half.shape[1]
         
         for ii in range(0, num):
-            x_idx = tuple(self.x_half[:, ii].astype(int))
+            x_idx = self.x_half[:, ii].astype(int)
+            x_idx_tup = tuple(x_idx)
             part_pot = np.roll(self.greens_pot, x_idx, (0, 1, 2))[0:self.ngrid, 0:self.ngrid, 0:self.ngrid]
             potential = self.pot - part_pot
             
             #update kinetic and potential energy for previous step
-            self.pe[self.steps_taken] += potential[x_idx]
+            self.pe[self.steps_taken] += potential[x_idx_tup]
             self.ke[:, self.steps_taken] = 1/2*self.m*(self.v[:, ii])**2
             
             if DEBUG:
@@ -164,35 +166,126 @@ class NbodyClass:
             #2: upwind derivative. check velocity. use cell that you're moving towards...?
         
             #METHOD 1: np.gradient
-            dx, dy, dz = np.gradient(potential)
-            try:
-                self.acc[0, ii] = -1*dx[x_idx]/self.m #divide by mass, which is just 1 by default
-                self.acc[1, ii] = -1*dy[x_idx]/self.m
-                self.acc[2, ii] = -1*dz[x_idx]/self.m
-            except Exception as e:
-                print(str(e))
-                print('bruh it broke wait why??')
-                print('x index is ', x_idx)
-                print('num is', num)
-                print('ii is', ii)
-                print('x half is ', self.x_half)
-                print('step number:  ', self.steps_taken)
+            if self.gradient:
+                dx, dy, dz = np.gradient(potential)
+                try:
+                    self.acc[0, ii] = dx[x_idx_tup]/self.m #divide by mass, which is just 1 by default. WILL NEED TO CHANGE.
+                    self.acc[1, ii] = dy[x_idx_tup]/self.m
+                    self.acc[2, ii] = dz[x_idx_tup]/self.m
+                except Exception as e:
+                    print(str(e))
+                    print('bruh it broke wait why??')
+                    print('x index is ', x_idx)
+                    print('num is', num)
+                    print('ii is', ii)
+                    print('x half is ', self.x_half)
+                    print('step number:  ', self.steps_taken)
 
-                assert 1==0
+                    assert 1==0
+
+                if DEBUG:
+                    mpl.figure()
+                    mpl.imshow(dx[0, :, :], cmap='hot')
+                    mpl.title('full gradient, x=0')
+                    mpl.colorbar()
+                    mpl.show()
+                    print('Gradient method provided ', self.acc[:, ii])
             
-            if DEBUG:
-                mpl.figure()
-                mpl.imshow(dx[0, :, :], cmap='hot')
-                mpl.title('full gradient, x=0')
-                mpl.colorbar()
-                mpl.show()
-        
             #METHOD 2: upwind derivative
             #check velocity to see which cell to differentiate.
             #will need guard cells for non-periodic.
             #will need to wrap around for periodic.
-#             if self.v[0, ii] > 0:
-#                 dx =  self.v[0, ii] - self.v[0, ii+1]
+            
+            else:
+                try:
+                    if self.periodic:
+                        #IF PERIODIC:
+                        #check velocity direction
+                        #index with modulo
+                        #subtract upwind one
+                        #yeah... I'm sorry.
+                        x_idx_mod = tuple(x_idx%self.ngrid)
+                        x_idx_mod_plus = tuple((x_idx+1)%self.ngrid)
+                        x_idx_mod_minus = tuple((x_idx-1)%self.ngrid)
+
+                        if self.v[0, ii] < 0:
+                            self.acc[0, ii] = potential[x_idx_mod] - potential[x_idx_mod_minus[0], x_idx_mod[1], x_idx_mod[2]]
+                        elif self.v[0, ii] >= 0:
+                            self.acc[0, ii] = potential[x_idx_mod_plus[0], x_idx_mod[1], x_idx_mod[2]] - potential[x_idx_mod]
+                        else:
+                            print('error periodic x force calc')
+
+                        if self.v[1, ii] < 0:
+                            self.acc[1, ii] = potential[x_idx_mod] - potential[x_idx_mod[0], x_idx_mod_minus[1], x_idx_mod[2]]
+                        elif self.v[1, ii] >= 0:
+                            self.acc[1, ii] = potential[x_idx_mod[0], x_idx_mod_plus[1], x_idx_mod[2]] - potential[x_idx_mod]
+                        else:
+                            print('error periodic y force calc')
+
+                        if self.v[2, ii] < 0:
+                            self.acc[2, ii] = potential[x_idx_mod] - potential[x_idx_mod[0], x_idx_mod[1], x_idx_mod_minus[2]]
+                        elif self.v[2, ii] >= 0:
+                            self.acc[2, ii] = potential[x_idx_mod[0], x_idx_mod[1], x_idx_mod_plus[2]] - potential[x_idx_mod]
+                        else:
+                            print('error periodic z force calc')
+
+                        #then divide by mass to actually get acceleration
+                        self.acc /= self.m
+
+                    else:
+                        #NOT periodic. need to check. is it towards the edge? if so, then subtract/add from zero.
+                        if (self.v[0, ii] < 0) and (x_idx_tup[0] - 1 > 0):
+                            self.acc[0, ii] = potential[x_idx_tup] - potential[x_idx_tup[0]-1, x_idx_tup[1], x_idx_tup[2]]
+                        elif (self.v[0, ii] < 0):
+                             self.acc[0, ii] = potential[x_idx_tup] - 0 #assume potential out of guard cells is zero
+                        elif (self.v[0, ii] >= 0) and (x_idx_tup[0] + 1 < self.ngrid):
+                            self.acc[0, ii] = potential[x_idx_tup[0]+1, x_idx_tup[1], x_idx_tup[2]] - potential[x_idx_tup]
+                        elif (self.v[0, ii] >= 0):
+                            self.acc[0, ii] = -1*potential[x_idx_tup] #assume potential out of guard cells is zero
+                        else:
+                            print('error nonperiodic x force calc')
+
+                        if (self.v[1, ii] < 0) and (x_idx_tup[1] - 1 > 0):
+                            self.acc[1, ii] = potential[x_idx_tup] - potential[x_idx_tup[0], x_idx_tup[1]-1, x_idx_tup[2]]
+                        elif (self.v[1, ii] < 0):
+                             self.acc[1, ii] = potential[x_idx_tup] - 0 #assume potential out of guard cells is zero
+                        elif (self.v[1, ii] >= 0) and (x_idx_tup[1] + 1 < self.ngrid):
+                            self.acc[1, ii] = potential[x_idx_tup[0], x_idx_tup[1]+1, x_idx_tup[2]] - potential[x_idx_tup]
+                        elif (self.v[1, ii] >= 0):
+                            self.acc[1, ii] = -1*potential[x_idx_tup] #assume potential out of guard cells is zero
+                        else:
+                            print('error nonperiodic y force calc')
+
+                        if (self.v[2, ii] < 0) and (x_idx_tup[2] - 1 > 0):
+                            self.acc[2, ii] = potential[x_idx_tup] - potential[x_idx_tup[0], x_idx_tup[1], x_idx_tup[2]-1]
+                        elif (self.v[2, ii] < 0):
+                             self.acc[2, ii] = potential[x_idx_tup] - 0 #assume potential out of guard cells is zero
+                        elif (self.v[2, ii] >= 0) and (x_idx_tup[2] + 1 < self.ngrid):
+                            self.acc[2, ii] = potential[x_idx_tup[0], x_idx_tup[1], x_idx_tup[2]+1] - potential[x_idx_tup]
+                        elif (self.v[2, ii] >= 0):
+                            self.acc[2, ii] = -1*potential[x_idx_tup] #assume potential out of guard cells is zero
+                        else:
+                            print('error nonperiodic z force calc')
+                except Exception as e:
+                    print(str(e))
+                    print('periodic: ', str(self.periodic))
+                    print('particle number ', ii, ' step number ', self.steps_taken)
+                    print('current position ', self.x[:, ii])
+                
+                if DEBUG:
+                    print('upwind/downwind method provided ', self.acc[:, ii])
+
+                
+#                 sign = np.sign(self.v[:, ii])
+#                 sign[sign==0] = 1 #no sign, just take from cell + 1
+#                 print('velocity is', self.v[:, ii])
+#                 print('sign is ', sign)
+#                 #if sign is NEGATIVE: backwards step. p(x) - p(x - dx)
+#                 #if sign is POSITIVE: FORWARDS step. p(x + dx) - p(x)
+#                 self.acc[0, ii] = -1*sign[0]*potential[x_idx%self.ngrid] + sign[0]*potential[                     (x_idx[0]+sign[0])%self.ngrid, x_idx[1]%self.ngrid, x_idx[2]%self.ngrid]
+#                 self.acc[1, ii] = -1*sign[1]*potential[x_idx%self.ngrid] + sign[1]*potential[x_idx[0], x_idx[1]+sign[1], x_idx[2]]
+#                 self.acc[2, ii] = -1*sign[2]*potential[x_idx%self.ngrid] + sign[2]*potential[x_idx[0], x_idx[1], x_idx[2]+sign[2]]
+                    
                 
             
         #FOR EACH PARTICLE
@@ -284,7 +377,7 @@ class NbodyClass:
             self.acc = self.acc[:, idx_inside]
             
         self.update_grid_half() #updates grid to values of half x
-        self.get_potential(DEBUG=DEBUG)
+        self.calculate_potential(DEBUG=DEBUG)
         
         #calculate the acceleration based on halfway x positions and potential
         self.calculate_acceleration(DEBUG=DEBUG)
@@ -312,8 +405,11 @@ class NbodyClass:
         #update the grid with the new legit x positions
         self.update_grid()
         
-        self.steps_taken +=1
+        self.steps_taken += 1
         return 0
+    
+    
+    
     
     def take_n_steps(self, n, plots=False, plot_every=10, DEBUG=False):
         for ii in range(0, n):
@@ -326,6 +422,15 @@ class NbodyClass:
                 self.plot_positions()
         return self.steps_taken
         
+    
+    #the x position has guard cells that shift its position.
+    #to return original position need to subtract off the added guard cells
+    #but ONLY for NONPERIODIC case
+    def get_x(self):
+        if self.periodic:
+            return self.x
+        return self.x - self.guard//2 
+    
     def plot_positions(self):
         fig=mpl.figure(figsize=(10,10))#Create 3D axes
         try: 
