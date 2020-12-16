@@ -4,7 +4,7 @@ from mpl_toolkits.mplot3d import Axes3D
 
 class NbodyClass:
     #guard cells should be even. irrelevant for periodic BC
-    def __init__(self, x, v, m=1, sgrid=10, dt=0.1, outdir='outputs/', periodic=False, guard=2, max_step=10**5, gradient=False, plot_name='nbodystep'):
+    def __init__(self, x, v, m=1, sgrid=10, dt=0.1, outdir='outputs/', periodic=False, guard=2, max_step=10**5, gradient=False, plot_name='nbodystep', soft=4):
         self.x = x.copy() #position vector.have x[0, :] = x, x[1,:] = y, x[2, :]=z etc.
         self.x_half = x.copy()
         self.v = v.copy() #velocity vector. 
@@ -14,6 +14,7 @@ class NbodyClass:
         self.steps_taken = 0
         self.guard=guard
         self.plot_name = plot_name
+        self.soft = soft
         
         #defining the grid
         #ONLY WANT GUARD CELLS FOR NON PERIODIC
@@ -79,8 +80,9 @@ class NbodyClass:
 #         dr[0, 0, 0] = 1
         
         #try softening a little more
-        soft_idx = dr < 4
-        dr[soft_idx] = 4
+        #default is 4.
+        soft_idx = dr < self.soft
+        dr[soft_idx] = self.soft
         
         if DEBUG:
             print('dr x = 0 is \n ', dr[0, :, :])
