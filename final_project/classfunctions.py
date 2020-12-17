@@ -154,8 +154,8 @@ class NbodyClass:
             potential = self.pot - part_pot
             
             #update kinetic and potential energy for previous step
-            self.pe[self.steps_taken] += potential[x_idx_tup]
-            self.ke[:, self.steps_taken] = 1/2*self.m*(self.v[:, ii])**2
+            self.pe[self.steps_taken] -= potential[x_idx_tup] #potential really shouuld be negative. my laziness that it's not
+            self.ke[:, self.steps_taken] += 1/2*self.m*(self.v[:, ii])**2
             
             if DEBUG:
                 mpl.figure()
