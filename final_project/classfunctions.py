@@ -93,6 +93,12 @@ class NbodyClass:
 
         self.greens_pot = 1/(4*np.pi*dr)
     
+    def plot_greens(self):
+        mpl.imshow(self.greens_pot[:, :, 0], cmap='hot')
+        mpl.title('Greens potential z=0 2D slice')
+        mpl.colorbar()
+        mpl.show()
+    
     #convolve the density matrix with the potential
     def calculate_potential(self, DEBUG=False):
         #FIRST UPDATE: self.grid (density matrix)
